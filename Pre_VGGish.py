@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 import torchaudio
 
@@ -29,32 +29,20 @@ metadata["target"] = le.fit_transform(metadata["category"])
 # Split into training and validation sets
 train_metadata, val_metadata = train_test_split(metadata, test_size=0.2, stratify=metadata["category"], random_state=42)
 
+
 # Define a PyTorch dataset to load the audio samples
-class ESC50Dataset(torch.utils.data.Dataset):
-    def __init__(self, metadata):
-        self.metadata = metadata
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5], std=[0.5])
-        ])
-
-    def __getitem__(self, index):
-        # Load the audio sample
-        file_path = data_path + "/audio/" + self.metadata.iloc[index]["filename"]
-        waveform, sample_rate = torchaudio.load(file_path)
-
-        # Extract VGGish features
-        with torch.no_grad():
-            vggish = hub.load('https://tfhub.dev/google/vggish/1').eval()
-            embeddings = vggish(waveform).numpy()
-
-        # Apply transformations to the features and return the sample and label
-        features = self.transform(torch.from_numpy(embeddings))
-        label = self.metadata.iloc[index]["target"]
-        return features, label
+class ESC50Dataset(Dataset):
+    def __init__(self, audio_files, labels):
+        self.audio_files = audio_files
+        self.labels = labels
 
     def __len__(self):
-        return len(self.metadata)
+        return len(self.audio_files)
+
+    def __getitem__(self, idx):
+        waveform, sample_rate = torchaudio.load(self.audio_files[idx])
+        mel_spectrogram = torchaudio.transforms.MelSpectrogram()(waveform).squeeze(0)
+        return mel_spectrogram, self.labels[idx]
 
 
 # Split the data into training and testing sets
@@ -89,13 +77,14 @@ class VGGishClassifier(nn.Module):
         return x
 
 
-model = VGGishClassifier().to(device)
+#model = VGGishClassifier().to(device)
+model = torch.hub.load('harritaylor/torchvggish', 'vggish')
 
 # Define the loss function and optimizer
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-num_epochs=50
+num_epochs = 50
 total_steps = len(train_dataset)
 # Train the model
 for epoch in range(num_epochs):
@@ -115,8 +104,9 @@ for epoch in range(num_epochs):
         optimizer.step()
 
         # Print training progress
-        if (i+1) % 10 == 0:
-            print ('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}'.format(epoch+1, num_epochs, i+1, total_step, loss.item()))
+        if (i + 1) % 10 == 0:
+            print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}'.format(epoch + 1, num_epochs, i + 1, total_step,
+                                                                     loss.item()))
 
 # Test the model
 model.eval()
@@ -132,5 +122,3 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 
     print('Test Accuracy of the model on the {} test images: {} %'.format(total, 100 * correct / total))
-
-

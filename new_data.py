@@ -149,7 +149,5 @@ for epoch in range(num_epochs):
             val_correct += (predicted == y).sum().item()
     val_loss /= len(val_dataset)
     val_acc = val_correct / len(val_dataset)
-    print("val_correct", val_correct)
-    print("val_acc", val_acc)
     print('Epoch [{}/{}], Validation Loss: {:.4f}, Validation Accuracy: {:.4f}'
           .format(epoch+1, num_epochs, val_loss, val_acc))
