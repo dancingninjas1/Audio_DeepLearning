@@ -1,0 +1,7 @@
+librosa==0.10.0
+numpy==1.23.5
+scikit-learn==1.1.1
+torch==2.0.0
+torchvision==0.15.0
+Pillow==9.4.0
+soundfile==0.12.1
