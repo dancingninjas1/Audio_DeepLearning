@@ -1,5 +1,3 @@
-
-
 import librosa
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -8,9 +6,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from PIL import Image
+import torchvision.transforms.functional as TF
+
+from torchvision.transforms import RandomApply, Compose, GaussianBlur, RandomCrop, RandomHorizontalFlip, \
+    RandomResizedCrop
 
 
-# Load the ESC-50 dataset
 # Load the ESC-50 dataset
 def load_data():
     audio_files = []
@@ -56,18 +59,39 @@ audio_files, labels = load_data()
 X_train, X_val, X_test, y_train, y_val, y_test = preprocess(audio_files, labels)
 
 
-
-
 class AudioDataset(Dataset):
-    def __init__(self, X, y):
+    def __init__(self, X, y, transforms=None):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
+        self.transforms = transforms
 
     def __len__(self):
         return len(self.y)
 
     def __getitem__(self, idx):
-        return self.X[idx], self.y[idx]
+        x, y = self.X[idx], self.y[idx]
+        if self.transforms:
+            x = self.transforms(x)
+        return x, y
+
+
+class CustomTransform:
+    def __call__(self, x):
+        if isinstance(x, torch.Tensor):
+            x = x.numpy().squeeze()  # Convert to numpy array and remove singleton dimensions
+            x = (x - x.min()) / (x.max() - x.min())  # Normalize to [0, 1]
+            x = np.stack([x, x, x], axis=-1)  # Convert grayscale image to RGB format
+            x = Image.fromarray((x * 255).astype(np.uint8), mode='RGB')  # Convert numpy array to PIL Image
+            x = TF.to_grayscale(x)  # Convert RGB to grayscale
+        return x
+
+
+transform_train = transforms.Compose([
+    CustomTransform(),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor()
+])
+
 
 class AudioCNN(nn.Module):
     def __init__(self, n_classes):
@@ -83,10 +107,20 @@ class AudioCNN(nn.Module):
         self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm2d(num_features=128)
         self.relu3 = nn.ReLU(inplace=True)
-        self.pool3 = nn.MaxPool2d(kernel_size=28)
-        self.fc1 = nn.Linear(in_features=128, out_features=512)
+        self.pool3 = nn.MaxPool2d(kernel_size=2)
+        self.conv4 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1)
+        self.bn4 = nn.BatchNorm2d(num_features=256)
         self.relu4 = nn.ReLU(inplace=True)
-        self.fc2 = nn.Linear(in_features=512, out_features=n_classes)
+        self.pool4 = nn.MaxPool2d(kernel_size=2)
+        self.conv5 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, padding=1)
+        self.bn5 = nn.BatchNorm2d(num_features=512)
+        self.relu5 = nn.ReLU(inplace=True)
+        self.pool5 = nn.MaxPool2d(kernel_size=2)
+        self.dropout = nn.Dropout(p=0.5)
+        self.fc1 = nn.Linear(in_features=512 * 4 * 4, out_features=8192)
+        self.relu6 = nn.ReLU(inplace=True)
+        self.dropout = nn.Dropout(p=0.5)
+        self.fc2 = nn.Linear(in_features=8192, out_features=n_classes)
 
     def forward(self, x):
         x = self.conv1(x)
@@ -101,9 +135,19 @@ class AudioCNN(nn.Module):
         x = self.bn3(x)
         x = self.relu3(x)
         x = self.pool3(x)
+        x = self.conv4(x)
+        x = self.bn4(x)
+        x = self.relu4(x)
+        x = self.pool4(x)
+        x = self.conv5(x)
+        x = self.bn5(x)
+        x = self.relu5(x)
+        x = self.pool5(x)
+        x = self.dropout(x)
         x = x.view(x.size(0), -1)
         x = self.fc1(x)
-        x = self.relu4(x)
+        x = self.relu6(x)
+        x = self.dropout(x)
         x = self.fc2(x)
         return x
 
@@ -116,9 +160,8 @@ criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.01, verbose=True)
 
-
 # Create audio datasets and data loaders
-train_dataset = AudioDataset(X_train[:, np.newaxis], y_train)
+train_dataset = AudioDataset(X_train[:, np.newaxis], y_train, transforms=transform_train)
 val_dataset = AudioDataset(X_val[:, np.newaxis], y_val)
 test_dataset = AudioDataset(X_test[:, np.newaxis], y_test)
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
@@ -126,7 +169,7 @@ val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
 # Train the audio CNN model
-num_epochs = 60
+num_epochs = 50
 for epoch in range(num_epochs):
     # Train the model
     model.train()
@@ -150,4 +193,4 @@ for epoch in range(num_epochs):
     val_loss /= len(val_dataset)
     val_acc = val_correct / len(val_dataset)
     print('Epoch [{}/{}], Validation Loss: {:.4f}, Validation Accuracy: {:.4f}'
-          .format(epoch+1, num_epochs, val_loss, val_acc))
+          .format(epoch + 1, num_epochs, val_loss, val_acc))
